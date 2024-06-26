@@ -12,3 +12,8 @@ class File(models.Model):
     upload_time = models.DateTimeField(auto_now_add=True)
     file_url = models.URLField()
     file_format = models.CharField(max_length=50,default=None)  # فیلد جدید برای ذخیره فرمت فایل
+
+class FileAccess(models.Model):
+    file = models.ForeignKey(File, on_delete=models.CASCADE)
+    owner = models.ForeignKey(User, related_name='owned_files', on_delete=models.CASCADE)
+    shared_with = models.ForeignKey(User, related_name='shared_files', on_delete=models.CASCADE)

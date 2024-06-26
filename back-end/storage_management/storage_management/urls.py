@@ -2,6 +2,8 @@ from django.contrib import admin
 from django.urls import path , re_path
 from . import views
 from rest_framework_simplejwt.views import (TokenRefreshView)
+from django.conf.urls.static import static
+from django.conf import settings
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -10,4 +12,12 @@ urlpatterns = [
     re_path('user/signup', views.signup),
     re_path('user/login', views.login),
     path('upload/', views.upload_file, name='upload_file'),
+    path('download/<int:file_id>/', views.download_file, name='download_file'),
+    path('share/', views.share_file, name='share_file'),
+    path('file_access_user_list/<int:file_id>/', views.file_access_user_list, name='file_access_user_list'),
+    re_path('user_files', views.user_files),
+    path('remove/<int:file_id>/', views.delete_file, name='delete_file'),
 ]
+if settings.DEBUG:
+    urlpatterns += static(settings.STATIC_URL, document_root=settings.STATICFILES_DIRS[0])
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

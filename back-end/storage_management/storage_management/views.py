@@ -16,8 +16,9 @@ from django.core.mail import EmailMessage
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
 from django.views.decorators.csrf import csrf_exempt
+from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
-from .models import File
+from .models import File , FileAccess
 from django.conf import settings
 import boto3
 from botocore.exceptions import NoCredentialsError
@@ -26,15 +27,25 @@ import os
 from .tokens import account_activation_token
 
 
-
-# views.py or a separate settings file
-FILE_TYPE_ICONS = {
-    'mp3': '/static/icons/mp3_icon.png',
-    'mp4': '/static/icons/mp4_icon.png',
-    'pdf': '/static/icons/pdf_icon.png',
-    'word': '/static/icons/word_icon.png',
-    # Add other file types and their corresponding icons
+FILE_ICONS = {
+    'image': 'icons/Image.svg',
+    'pdf': 'icons/PDF.svg',
+    'video': 'icons/Audio.svg',
+    'music': 'icons/pdf.svg',
+    'unknown': 'icons/Unknown.svg'
 }
+
+def get_icon_for_file(file_format):
+    if file_format == ".png" or file_format == ".jpeg" or file_format == ".jpg":
+        return FILE_ICONS['image']
+    elif file_format == '.pdf':
+        return FILE_ICONS['pdf']
+    elif file_format == '.mp4':
+        return FILE_ICONS['video']
+    elif file_format == '.mp3':
+        return FILE_ICONS['music']
+    else:
+        return FILE_ICONS['unknown']
 
 
 
@@ -124,7 +135,10 @@ def signup(request):
 
     user = User.objects.get(username = username)
     user.set_password(password)
+    user.is_active=False
     user.save()
+
+    activateEmail(request, user, email)
     
     return Response({"user":user.username},status=status.HTTP_201_CREATED)
 
@@ -163,13 +177,13 @@ def upload_file(request):
     user_id = request.POST['user_id']
     file = request.FILES['file']
     
-    # گرفتن اطلاعات کاربر
+    
     user = User.objects.get(id=user_id)
 
 
-    file_format = os.path.splitext(file.name)[1].lower()  # فرمت فایل را دریافت می‌کند
+    file_format = os.path.splitext(file.name)[1].lower()  
 
-    # آپلود فایل به ابر آرمان
+    
     s3 = boto3.client('s3',
                         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
                         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
@@ -180,11 +194,126 @@ def upload_file(request):
         s3.upload_fileobj(file, settings.AWS_STORAGE_BUCKET_NAME, file.name)
         file_url = f"{settings.AWS_S3_CUSTOM_DOMAIN}/{file.name}"
         
-        # ذخیره‌سازی اطلاعات فایل در دیتابیس
+       
         file_record = File(user=user, file_name=file.name, file_format=file_format, file_url=file_url)
         file_record.save()
         
         return JsonResponse({'status': 'success', 'file_url': file_url})
     except NoCredentialsError:
         return JsonResponse({'status': 'error', 'message': 'Credentials not available'})
+
+@api_view(['GET'])
+def download_file(request, file_id):
+    # پیدا کردن فایل در دیتابیس
+    file_record = get_object_or_404(File, id=file_id)
+    
+    # ساختن کلاینت S3
+    s3 = boto3.client('s3',
+                      aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                      aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                      region_name=settings.AWS_S3_REGION_NAME,
+                      endpoint_url=settings.AWS_S3_ENDPOINT_URL)
+    
+    
+    try:
+        file_url = s3.generate_presigned_url('get_object',
+                                             Params={'Bucket': settings.AWS_STORAGE_BUCKET_NAME,
+                                                     'Key': file_record.file_name},
+                                             ExpiresIn=3600)  # لینک با اعتبار یک ساعت
+        return JsonResponse({'status': 'success', 'file_url': file_url})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)})
+
+
+@api_view(['GET'])
+def delete_file(request, file_id):
+    
+    file_record = get_object_or_404(File, id=file_id)
+    
+   
+    s3 = boto3.client('s3',
+                        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+                        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+                        region_name=settings.AWS_S3_REGION_NAME,
+                        endpoint_url=settings.AWS_S3_ENDPOINT_URL)
+    
+    
+    try:
+        s3.delete_object(Bucket=settings.AWS_STORAGE_BUCKET_NAME, Key=file_record.file_name)
+        
+        
+        file_record.delete()
+        
+        return JsonResponse({'status': 'success', 'message': 'File deleted successfully'})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': str(e)})
+    
+    
+@api_view(['POST'])
+def share_file(request):
+    owner_id = request.data.get('owner_id')
+    shared_with_id = request.data.get('shared_with_id')
+    file_id = request.data.get('file_id')
+    
+    owner = get_object_or_404(User, id=owner_id)
+    shared_with = get_object_or_404(User, id=shared_with_id)
+    file = get_object_or_404(File, id=file_id, user=owner)
+    
+   
+    access_record, created = FileAccess.objects.update_or_create(
+        file=file,
+        owner=owner,
+        shared_with=shared_with,
+    )
+    
+    return JsonResponse({'status': 'success', 'message': 'Access granted'})
+
+    
+@api_view(['GET'])
+def file_access_user_list(request, file_id):
+   
+    file_record = get_object_or_404(File, id=file_id)
+    
+   
+    access_records = FileAccess.objects.filter(file=file_record)
+    users_with_access = User.objects.filter(id__in=access_records.values('shared_with')).order_by('username')
+    
+   
+    users_without_access = User.objects.exclude(id__in=access_records.values('shared_with')).order_by('username')
+    
+   
+    access_list = [{'user_id': user.id, 'username': user.username, 'has_access': True} for user in users_with_access]
+    no_access_list = [{'user_id': user.id, 'username': user.username, 'has_access': False} for user in users_without_access]
+    
+    combined_list = access_list + no_access_list
+    
+    return JsonResponse({'status': 'success', 'data': combined_list})
+
+@api_view(['GET'])
+def user_files(request):
+    user_id = request.data.get('user_id')
+    user=User.objects.get(id=user_id)
+    owned_files = File.objects.filter(user=user).order_by('file_name')
+    owned_files_list = [{
+        'file_id': file.id,
+        'file_name': file.file_name,
+        'file_format': file.file_format,
+        'file_icon': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(file.file_format)),
+        'access_type': 'owner'
+    } for file in owned_files]
+    
+    
+    accessed_files_records = FileAccess.objects.filter(shared_with=user).select_related('file')
+    accessed_files_list = [{
+        'file_id': record.file.id,
+        'file_name': record.file.file_name,
+        'file_format': record.file.file_format,
+        'file_icon': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(record.file.file_format)),
+        'access_type': 'shared'
+    } for record in accessed_files_records]
+    
+   
+    combined_list = owned_files_list + accessed_files_list
+    
+    return JsonResponse({'status': 'success', 'data': combined_list})
 
