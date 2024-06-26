@@ -44,7 +44,8 @@ INSTALLED_APPS = [
     'corsheaders',
     "rest_framework",
     'rest_framework_simplejwt.token_blacklist',    
-    "storage_management"
+    "storage_management",
+    "storages"
 ]
 
 REST_FRAMEWORK = {
@@ -96,7 +97,14 @@ SIMPLE_JWT = {
     "SLIDING_TOKEN_REFRESH_SERIALIZER": "rest_framework_simplejwt.serializers.TokenRefreshSlidingSerializer",
 }
 
-
+EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
+EMAIL_HOST = 'smtp.gmail.com'
+EMAIL_FORM = 'ehsan.akbajj@gmail.com'
+EMAIL_HOST_USER = 'ehsan.akbajj@gmail.com'
+DEFAULT_FROM_EMAIL = 'ehsan.akbajj@gmail.com'
+EMAIL_HOST_PASSWORD = 'eeotvfjqoibszhcv'
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
 
 
 
@@ -108,6 +116,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    'corsheaders.middleware.CorsMiddleware',
+    'django.middleware.common.CommonMiddleware',
 ]
 
 ROOT_URLCONF = "storage_management.urls"
@@ -220,3 +230,13 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 
+
+
+
+
+AWS_ACCESS_KEY_ID = 'e48defe3-cd6f-4339-baa1-182d81ff618b'
+AWS_SECRET_ACCESS_KEY = '31da69d90d5e954799b7486d155d6fe2cc4f53cdbc47746a8c4508855501ea34'
+AWS_STORAGE_BUCKET_NAME = 'storage-management'
+AWS_S3_ENDPOINT_URL = 'https://storage-management.s3.ir-thr-at1.arvanstorage.ir'
+AWS_S3_REGION_NAME = 'ir-thr-at1'
+AWS_S3_CUSTOM_DOMAIN = f'{AWS_STORAGE_BUCKET_NAME}.s3.ir-thr-at1.arvanstorage.ir'
