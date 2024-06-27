@@ -1,7 +1,6 @@
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 from rest_framework import status
-from django.contrib.auth.hashers import make_password 
 from django.contrib.auth.models import User
 from datetime import timedelta, datetime, timezone
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
@@ -15,10 +14,9 @@ from django.contrib import messages
 from django.core.mail import EmailMessage
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
-from django.views.decorators.csrf import csrf_exempt
 from django.shortcuts import get_object_or_404
 from django.contrib.auth.models import User
-from .models import File , FileAccess
+from .models import File , FileAccess , EmailObserver
 from django.conf import settings
 import boto3
 from botocore.exceptions import NoCredentialsError
@@ -135,10 +133,10 @@ def signup(request):
 
     user = User.objects.get(username = username)
     user.set_password(password)
-    user.is_active=False
+    #user.is_active=False
     user.save()
 
-    activateEmail(request, user, email)
+    #activateEmail(request, user, email)
     
     return Response({"user":user.username},status=status.HTTP_201_CREATED)
 
@@ -204,10 +202,10 @@ def upload_file(request):
 
 @api_view(['GET'])
 def download_file(request, file_id):
-    # پیدا کردن فایل در دیتابیس
+
     file_record = get_object_or_404(File, id=file_id)
     
-    # ساختن کلاینت S3
+    
     s3 = boto3.client('s3',
                       aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
                       aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
@@ -270,18 +268,19 @@ def share_file(request):
 
     
 @api_view(['GET'])
-def file_access_user_list(request, file_id):
-   
+def user_file_access(request, file_id):
     file_record = get_object_or_404(File, id=file_id)
     
-   
+    # مالک فایل
+    owner = file_record.user
+    
+    # رکوردهای دسترسی به فایل
     access_records = FileAccess.objects.filter(file=file_record)
-    users_with_access = User.objects.filter(id__in=access_records.values('shared_with')).order_by('username')
+    users_with_access = User.objects.filter(id__in=access_records.values('shared_with')).exclude(id=owner.id).order_by('username')
     
-   
-    users_without_access = User.objects.exclude(id__in=access_records.values('shared_with')).order_by('username')
+    # حذف کاربران بدون دسترسی (به جز مالک فایل)
+    users_without_access = User.objects.exclude(id__in=[user.id for user in users_with_access]).exclude(id=owner.id).order_by('username')
     
-   
     access_list = [{'user_id': user.id, 'username': user.username, 'has_access': True} for user in users_with_access]
     no_access_list = [{'user_id': user.id, 'username': user.username, 'has_access': False} for user in users_without_access]
     
@@ -317,3 +316,38 @@ def user_files(request):
     
     return JsonResponse({'status': 'success', 'data': combined_list})
 
+
+
+@api_view(['POST'])
+def update_file_access(request):
+    file_id = request.data.get('file_id')
+    file_record = get_object_or_404(File, id=file_id)
+    
+    
+    new_access_list = request.data.get('access_list', [])
+    
+    
+    current_access_records = FileAccess.objects.filter(file=file_record)
+    current_access_users = set(current_access_records.values_list('shared_with', flat=True))
+    
+   
+    new_access_users = set([user['user_id'] for user in new_access_list if user['has_access']])
+    
+    
+    users_to_remove_access = current_access_users - new_access_users
+    
+    
+    users_to_add_access = new_access_users - current_access_users
+    
+    # حذف دسترسی کاربران
+    FileAccess.objects.filter(file=file_record, shared_with_id__in=users_to_remove_access).delete()
+    
+    # اضافه کردن دسترسی کاربران و ارسال ایمیل به آنها
+    for user_id in users_to_add_access:
+        user = get_object_or_404(User, id=user_id)
+        file_access = FileAccess(file=file_record, shared_with=user, owner=file_record.user)
+        email_observer = EmailObserver()
+        file_access.attach(email_observer)
+        file_access.save()
+    
+    return JsonResponse({'status': 'success', 'message': 'Access updated successfully'})

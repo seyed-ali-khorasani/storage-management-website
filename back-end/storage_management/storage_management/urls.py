@@ -14,9 +14,10 @@ urlpatterns = [
     path('upload/', views.upload_file, name='upload_file'),
     path('download/<int:file_id>/', views.download_file, name='download_file'),
     path('share/', views.share_file, name='share_file'),
-    path('file_access_user_list/<int:file_id>/', views.file_access_user_list, name='file_access_user_list'),
+    path('user_file_access/<int:file_id>/', views.user_file_access, name='file_access_user_list'),
     re_path('user_files', views.user_files),
     path('remove/<int:file_id>/', views.delete_file, name='delete_file'),
+    path('update_access/', views.update_file_access, name='update_file_access'),
 ]
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATICFILES_DIRS[0])
