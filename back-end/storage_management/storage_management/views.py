@@ -31,16 +31,23 @@ from django.core.mail import EmailMultiAlternatives
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken
 import math
+import logging 
+
+
+
 
 from .tokens import account_activation_token
 
 
+
+
 FILE_ICONS = {
-    'image': 'icons/Image.svg',
-    'pdf': 'icons/PDF.svg',
-    'video': 'icons/Audio.svg',
-    'music': 'icons/pdf.svg',
-    'unknown': 'icons/Unknown.svg'
+    'image': 'icons/Image.png',
+    'pdf': 'icons/pdf.png',
+    'video': 'icons/Audio.png',
+    'music': 'icons/Music.png',
+    'unknown': 'icons/others.png',
+    'profile' : 'icons/profile.png'
 }
 
 def get_icon_for_file(file_format):
@@ -165,34 +172,55 @@ def login(request):
     username_or_email = request.data.get("username")
     password = request.data.get("password")
     
-    if(username_or_email or password) is None:
-        return Response({'error':'Email or Username and Password are required!'},status=status.HTTP_400_BAD_REQUEST)
+    if not username_or_email or not password:
+        return Response({'error':'Email or Username and Password are required!'}, status=status.HTTP_400_BAD_REQUEST)
 
     if "@" in username_or_email:
-        user = authenticate(email=username_or_email, password=password)
+        user_query = User.objects.filter(email=username_or_email)
     else:
-        user = authenticate(username=username_or_email, password=password)
+        user_query = User.objects.filter(username=username_or_email)
+
+    if not user_query.exists():
+        return Response({'error': 'Username or Password is incorrect!'}, status=status.HTTP_400_BAD_REQUEST)
+
+    user = user_query.first()
+
+    if not user.is_active:
+        return Response({'error': 'Not Active Account'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    # Authenticate user
+    user = authenticate(username=user.username, password=password)
 
     if user is not None:
-            refresh = MyTokenObtainPairSerializer.get_token(user)
-            return Response({
-                'refresh': str(refresh),
-                'access': str(refresh.access_token),
-                'username': refresh['username'],
-            },status=status.HTTP_200_OK)
+        refresh = MyTokenObtainPairSerializer.get_token(user)
+        return Response({
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+            'username': refresh['username'],
+        }, status=status.HTTP_200_OK)
     else:
         return Response({'error': 'Username or Password is incorrect!'}, status=status.HTTP_400_BAD_REQUEST)
-    
 
 
 
 @api_view(['POST'])
 def upload_file(request):
 
-    user_id = request.POST['user_id']
+    print(request.headers.get('Authorization'))
+    authentication_classes = [JWTAuthentication]
+
+    # Validate the token and get the user
+    token = request.headers.get('Authorization').split()[1]
+    jwt_auth = JWTAuthentication()
+    try:
+        validated_token = jwt_auth.get_validated_token(token)
+        user = jwt_auth.get_user(validated_token)
+    except InvalidToken:
+        return Response({'error': 'Invalid token!'}, status=status.HTTP_401_UNAUTHORIZED)
+
+
     file = request.FILES['file']
     
-    user = User.objects.get(id=user_id)
     
     file_size = file.size  # Get the file size
 
@@ -213,7 +241,7 @@ def upload_file(request):
         file_record = File(user=user, file_name=file.name, file_format=file_format, file_url=file_url, file_size=file_size)
         file_record.save()
         
-        return JsonResponse({'status': 'success', 'file_url': file_url})
+        return JsonResponse({'M': 'Your file uploaded succesfully', 'file_url': file_url})
     except NoCredentialsError:
         return JsonResponse({'status': 'error', 'message': 'Credentials not available'})
 
@@ -295,11 +323,11 @@ def user_file_access(request, file_id):
     access_records = FileAccess.objects.filter(file=file_record)
     users_with_access = User.objects.filter(id__in=access_records.values('shared_with')).exclude(id=owner.id).order_by('username')
     
-    # حذف کاربران بدون دسترسی (به جز مالک فایل)
+    
     users_without_access = User.objects.exclude(id__in=[user.id for user in users_with_access]).exclude(id=owner.id).order_by('username')
     
-    access_list = [{'user_id': user.id, 'username': user.username, 'has_access': True} for user in users_with_access]
-    no_access_list = [{'user_id': user.id, 'username': user.username, 'has_access': False} for user in users_without_access]
+    access_list = [{'id': user.id, 'username': user.username,'email':user.email,'profile_image': request.build_absolute_uri(settings.STATIC_URL + FILE_ICONS['profile']), 'have_access': True} for user in users_with_access]
+    no_access_list = [{'id': user.id, 'username': user.username, 'email':user.email,'profile_image': request.build_absolute_uri(settings.STATIC_URL + FILE_ICONS['profile']),'have_access': False} for user in users_without_access]
     
     combined_list = access_list + no_access_list
     
@@ -309,18 +337,32 @@ def user_file_access(request, file_id):
 
 @api_view(['GET'])
 def search_user(request):
-    username = request.GET.get('username', '')
-    users_data = User.objects.filter(Q(username__icontains=username))
-    
+
+    username = request.query_params.get('username', '').strip()
+    file_id = request.query_params.get('id', '').strip()
+   
+    file_record = get_object_or_404(File, id=file_id)
+   
+
+
+   
+    users_data = User.objects.filter(Q(username__icontains=username)).exclude(id=file_record.user.id)
+
     if users_data.exists():
         user_list = []
         for user in users_data:
+            
+            have_access = FileAccess.objects.filter(file=file_record, shared_with=user).exists()
+
             user_data = {
                 'id': user.id,
                 'username': user.username,
-                'email': user.email
+                'email': user.email,
+                'profile_image': request.build_absolute_uri(settings.STATIC_URL + FILE_ICONS['profile']),
+                'have_access': have_access  # True if user has access, False otherwise
             }
             user_list.append(user_data)
+
         return Response({"data": user_list}, status=status.HTTP_200_OK)
     else:
         return Response({'error': 'User not found'}, status=status.HTTP_400_BAD_REQUEST)
@@ -364,7 +406,6 @@ def user_files(request):
     except InvalidToken:
         return Response({'error': 'Invalid token!'}, status=status.HTTP_401_UNAUTHORIZED)
 
-    #user_id = request.query_params.get('user_id')
     user_id = user.id
     page_number = request.query_params.get('page', 1)
 
@@ -376,7 +417,7 @@ def user_files(request):
     except User.DoesNotExist:
         return Response({'status': 'error', 'message': 'User not found'}, status=404)
 
-    owned_files = File.objects.filter(user=user).order_by('file_name')
+    owned_files = File.objects.filter(user=user).order_by('-upload_time')
     owned_files_list = []
     total_size = 0
     for file in owned_files:
@@ -384,7 +425,7 @@ def user_files(request):
         owned_files_list.append({
             'id': file.id,
             'name': file.file_name,
-            'space' : convert_size(file.file_size),
+            'space': convert_size(file.file_size),
             'file_format': file.file_format,
             'image': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(file.file_format)),
             'owner_access': True,
@@ -395,14 +436,14 @@ def user_files(request):
         })
         total_size += file.file_size
 
-    accessed_files_records = FileAccess.objects.filter(shared_with=user).select_related('file')
+    accessed_files_records = FileAccess.objects.filter(shared_with=user).select_related('file').order_by('-file__upload_time')
     accessed_files_list = []
     for record in accessed_files_records:
         formatted_time = format_upload_time(record.file.upload_time)
         accessed_files_list.append({
             'id': record.file.id,
             'name': record.file.file_name,
-            'space' : convert_size(record.file.file_size),
+            'space': convert_size(record.file.file_size),
             'file_format': record.file.file_format,
             'image': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(record.file.file_format)),
             'owner_access': False,
@@ -415,7 +456,11 @@ def user_files(request):
 
     combined_list = owned_files_list + accessed_files_list
 
-    paginator = Paginator(combined_list, 24)  # Show 24 items per page
+    #combined_list = sorted(combined_list, key=lambda x: x.get('upload_time', 0), reverse=True)
+
+    combined_list = sorted(combined_list, key=lambda x: x['id'], reverse=True)
+
+    paginator = Paginator(combined_list, 24)  
 
     try:
         page_obj = paginator.page(page_number)
@@ -447,7 +492,7 @@ def update_file_access(request):
     current_access_users = set(current_access_records.values_list('shared_with', flat=True))
     
    
-    new_access_users = set([user['user_id'] for user in new_access_list if user['has_access']])
+    new_access_users = set([user['id'] for user in new_access_list if user['have_access']])
     
     
     users_to_remove_access = current_access_users - new_access_users
@@ -455,10 +500,10 @@ def update_file_access(request):
     
     users_to_add_access = new_access_users - current_access_users
     
-    # حذف دسترسی کاربران
+    
     FileAccess.objects.filter(file=file_record, shared_with_id__in=users_to_remove_access).delete()
     
-    # اضافه کردن دسترسی کاربران و ارسال ایمیل به آنها
+   
     for user_id in users_to_add_access:
         user = get_object_or_404(User, id=user_id)
         file_access = FileAccess(file=file_record, shared_with=user, owner=file_record.user)
@@ -469,8 +514,10 @@ def update_file_access(request):
     return JsonResponse({'status': 'success', 'message': 'Access updated successfully'})
 
 
+
+
 @api_view(['GET'])
-def search_user_files(request):
+def test(request):
     authentication_classes = [JWTAuthentication]
 
     # Validate the token and get the user
@@ -484,7 +531,9 @@ def search_user_files(request):
 
     user_id = user.id
     page_number = request.query_params.get('page', 1)
-    search_term = request.query_params.get('search', '')
+    search_term = request.query_params.get('search', '').strip()
+
+    print("Debug message: Search term =", search_term)
 
     if not user_id:
         return Response({'status': 'error', 'message': 'User ID is required'}, status=400)
@@ -494,8 +543,11 @@ def search_user_files(request):
     except User.DoesNotExist:
         return Response({'status': 'error', 'message': 'User not found'}, status=404)
 
+
     # Search in owned files
-    owned_files = File.objects.filter(user=user).filter(Q(file_name__icontains=search_term)).order_by('file_name')
+    owned_files = File.objects.filter(user=user, file_name__icontains=search_term).order_by('file_name')
+    # Log owned files
+   
     owned_files_list = []
     total_size = 0
     for file in owned_files:
@@ -515,7 +567,9 @@ def search_user_files(request):
         total_size += file.file_size
 
     # Search in accessed files
-    accessed_files_records = FileAccess.objects.filter(shared_with=user).filter(Q(file__file_name__icontains=search_term)).select_related('file')
+    accessed_files_records = FileAccess.objects.filter(shared_with=user, file__file_name__icontains=search_term).select_related('file')
+    # Log accessed files
+   
     accessed_files_list = []
     for record in accessed_files_records:
         formatted_time = format_upload_time(record.file.upload_time)
@@ -534,6 +588,8 @@ def search_user_files(request):
         total_size += record.file.file_size
 
     combined_list = owned_files_list + accessed_files_list
+
+    #combined_list = sorted(combined_list, key=lambda x: x['upload_time'], reverse=True)
 
     paginator = Paginator(combined_list, 24)  # Show 24 items per page
 

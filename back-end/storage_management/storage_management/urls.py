@@ -20,7 +20,7 @@ urlpatterns = [
     path('update_access/', views.update_file_access, name='update_file_access'),
     re_path('search', views.search_user, name='search'),
     path('activate/<uidb64>/<token>',views.activate,name="activate"),
-    path('search_user_files/', views.search_user_files, name='search_user_files'),
+    path('test/', views.test, name='search_user_files'),
 ]
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATICFILES_DIRS[0])
