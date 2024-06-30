@@ -4,6 +4,8 @@ from django.contrib.auth.models import User
 from abc import ABC, abstractmethod
 from django.core.mail import send_mail
 from django.conf import settings
+from django.core.paginator import Paginator
+from rest_framework.pagination import PageNumberPagination
 
 
 
@@ -17,6 +19,7 @@ class File(models.Model):
     upload_time = models.DateTimeField(auto_now_add=True)
     file_url = models.URLField()
     file_format = models.CharField(max_length=50,default=None)  
+    file_size = models.FloatField(default=0)
 
 
 
@@ -73,5 +76,8 @@ class EmailObserver(Observer):
 
 
 
-
+class CustomPagination(PageNumberPagination):
+    page_size = 24
+    page_size_query_param = 'page_size'
+    max_page_size = 100
 

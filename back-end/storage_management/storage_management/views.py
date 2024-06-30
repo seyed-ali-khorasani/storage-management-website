@@ -21,6 +21,16 @@ from django.conf import settings
 import boto3
 from botocore.exceptions import NoCredentialsError
 import os
+from django.core.paginator import Paginator
+from rest_framework.pagination import PageNumberPagination
+from rest_framework.response import Response
+from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
+from django.db.models import Q
+from django.utils.html import strip_tags
+from django.core.mail import EmailMultiAlternatives
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken
+import math
 
 from .tokens import account_activation_token
 
@@ -73,13 +83,14 @@ def activate(request, uidb64, token):
         user = User.objects.get(pk=uid)
     except:
         user = None
+    print("mjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj")
 
     if user is not None and account_activation_token.check_token(user, token):
         user.is_active = True
         user.save()
 
         messages.success(request, "Thank you for your email confirmation. Now you can login your account.")
-        return Response({'M': 'Done'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'M': 'Done'}, status=status.HTTP_200_OK)
     else:
         messages.error(request, "Activation link is invalid!")
 
@@ -96,21 +107,24 @@ def activateEmail(request,user,to_email):
     protocol = 'https' if request.is_secure() else 'http'
 
     print(f"Token :{token}")
-    
-    message = render_to_string("template_activate_account.html",{
-        'user':user.username,
-        'domain':domain,
-        'uid':uid,
-        'token':token,
-        'protocol':protocol
-    })
-
-    email = EmailMessage(mail_subject,message,to={to_email})
-    if email.send():
-        messages.success(request, f'Dear <b>{user.username}</b>, please go to your email <b>{to_email}</b> inbox and click on \
-            received activation link to confirm and complete the registration. <b>Note:</b> Check your spam folder.')
-    else :
-        messages.error(request, f'Problem sending email to {to_email}, check if you typed it correctly.')
+    print("mjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj")
+    html_code = '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Document</title></head><body><a href="http://localhost:3000/user/activate/'+ str(uid)+'/' + str(token)+'">active your email</a></body></html>'
+    text_content = strip_tags(html_code)
+    email = EmailMultiAlternatives(
+        subject='Thanks for you registeration',
+        body=text_content,
+        from_email="ehsan.akbajj@gmail.com",
+        to=[to_email]
+    )
+    email.attach_alternative(html_code,"text/html")
+    email.send()
+    return Response({"m":"email send"})
+    #email = EmailMessage(mail_subject,message,to={to_email})
+    # if email.send():
+    #     messages.success(request, f'Dear <b>{user.username}</b>, please go to your email <b>{to_email}</b> inbox and click on \
+    #         received activation link to confirm and complete the registration. <b>Note:</b> Check your spam folder.')
+    # else :
+    #     messages.error(request, f'Problem sending email to {to_email}, check if you typed it correctly.')
 
 
 
@@ -121,6 +135,9 @@ def signup(request):
     username = request.data.get("username")
     email = request.data.get("email")
     password = request.data.get("password")
+
+    print(username)
+    print(password)
 
     if (username or password) is None:
         return Response({'error': 'Username and password are required'}, status=status.HTTP_400_BAD_REQUEST)
@@ -133,10 +150,10 @@ def signup(request):
 
     user = User.objects.get(username = username)
     user.set_password(password)
-    #user.is_active=False
+    user.is_active=False
     user.save()
 
-    #activateEmail(request, user, email)
+    activateEmail(request, user, email)
     
     return Response({"user":user.username},status=status.HTTP_201_CREATED)
 
@@ -175,9 +192,9 @@ def upload_file(request):
     user_id = request.POST['user_id']
     file = request.FILES['file']
     
-    
     user = User.objects.get(id=user_id)
-
+    
+    file_size = file.size  # Get the file size
 
     file_format = os.path.splitext(file.name)[1].lower()  
 
@@ -193,7 +210,7 @@ def upload_file(request):
         file_url = f"{settings.AWS_S3_CUSTOM_DOMAIN}/{file.name}"
         
        
-        file_record = File(user=user, file_name=file.name, file_format=file_format, file_url=file_url)
+        file_record = File(user=user, file_name=file.name, file_format=file_format, file_url=file_url, file_size=file_size)
         file_record.save()
         
         return JsonResponse({'status': 'success', 'file_url': file_url})
@@ -271,10 +288,10 @@ def share_file(request):
 def user_file_access(request, file_id):
     file_record = get_object_or_404(File, id=file_id)
     
-    # مالک فایل
+    
     owner = file_record.user
     
-    # رکوردهای دسترسی به فایل
+    
     access_records = FileAccess.objects.filter(file=file_record)
     users_with_access = User.objects.filter(id__in=access_records.values('shared_with')).exclude(id=owner.id).order_by('username')
     
@@ -288,34 +305,133 @@ def user_file_access(request, file_id):
     
     return JsonResponse({'status': 'success', 'data': combined_list})
 
+
+
+@api_view(['GET'])
+def search_user(request):
+    username = request.GET.get('username', '')
+    users_data = User.objects.filter(Q(username__icontains=username))
+    
+    if users_data.exists():
+        user_list = []
+        for user in users_data:
+            user_data = {
+                'id': user.id,
+                'username': user.username,
+                'email': user.email
+            }
+            user_list.append(user_data)
+        return Response({"data": user_list}, status=status.HTTP_200_OK)
+    else:
+        return Response({'error': 'User not found'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+
+class CustomPagination(PageNumberPagination):
+    page_size = 24
+    page_size_query_param = 'page_size'
+    max_page_size = 100
+
+def format_upload_time(upload_time):
+    # Example format: "day time: pm or am, month: jun, oct, or others, date: day of generated"
+    return {
+        'time': upload_time.strftime("%I:%M"),
+        'typeee':upload_time.strftime("%p"),
+        'month': upload_time.strftime("%b"),
+        'date': upload_time.strftime("%d")
+    }
+
+def convert_size(size_bytes):
+    if size_bytes == 0:
+        return "0B"
+    size_name = ("B", "KB", "MB", "GB", "TB")
+    i = int(math.floor(math.log(size_bytes, 1024)))
+    p = math.pow(1024, i)
+    s = round(size_bytes / p, 2)
+    return f"{s} {size_name[i]}"
+
+
 @api_view(['GET'])
 def user_files(request):
-    user_id = request.data.get('user_id')
-    user=User.objects.get(id=user_id)
-    owned_files = File.objects.filter(user=user).order_by('file_name')
-    owned_files_list = [{
-        'file_id': file.id,
-        'file_name': file.file_name,
-        'file_format': file.file_format,
-        'file_icon': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(file.file_format)),
-        'access_type': 'owner'
-    } for file in owned_files]
-    
-    
-    accessed_files_records = FileAccess.objects.filter(shared_with=user).select_related('file')
-    accessed_files_list = [{
-        'file_id': record.file.id,
-        'file_name': record.file.file_name,
-        'file_format': record.file.file_format,
-        'file_icon': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(record.file.file_format)),
-        'access_type': 'shared'
-    } for record in accessed_files_records]
-    
-   
-    combined_list = owned_files_list + accessed_files_list
-    
-    return JsonResponse({'status': 'success', 'data': combined_list})
+    authentication_classes = [JWTAuthentication]
 
+    # Validate the token and get the user
+    token = request.headers.get('Authorization').split()[1]
+    jwt_auth = JWTAuthentication()
+    try:
+        validated_token = jwt_auth.get_validated_token(token)
+        user = jwt_auth.get_user(validated_token)
+    except InvalidToken:
+        return Response({'error': 'Invalid token!'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    #user_id = request.query_params.get('user_id')
+    user_id = user.id
+    page_number = request.query_params.get('page', 1)
+
+    if not user_id:
+        return Response({'status': 'error', 'message': 'User ID is required'}, status=400)
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({'status': 'error', 'message': 'User not found'}, status=404)
+
+    owned_files = File.objects.filter(user=user).order_by('file_name')
+    owned_files_list = []
+    total_size = 0
+    for file in owned_files:
+        formatted_time = format_upload_time(file.upload_time)
+        owned_files_list.append({
+            'id': file.id,
+            'name': file.file_name,
+            'space' : convert_size(file.file_size),
+            'file_format': file.file_format,
+            'image': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(file.file_format)),
+            'owner_access': True,
+            'time': formatted_time['time'],
+            'day_time': formatted_time['typeee'],
+            'month': formatted_time['month'],
+            'date': formatted_time['date']
+        })
+        total_size += file.file_size
+
+    accessed_files_records = FileAccess.objects.filter(shared_with=user).select_related('file')
+    accessed_files_list = []
+    for record in accessed_files_records:
+        formatted_time = format_upload_time(record.file.upload_time)
+        accessed_files_list.append({
+            'id': record.file.id,
+            'name': record.file.file_name,
+            'space' : convert_size(record.file.file_size),
+            'file_format': record.file.file_format,
+            'image': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(record.file.file_format)),
+            'owner_access': False,
+            'time': formatted_time['time'],
+            'day_time': formatted_time['typeee'],
+            'month': formatted_time['month'],
+            'date': formatted_time['date']
+        })
+        total_size += record.file.file_size
+
+    combined_list = owned_files_list + accessed_files_list
+
+    paginator = Paginator(combined_list, 24)  # Show 24 items per page
+
+    try:
+        page_obj = paginator.page(page_number)
+    except EmptyPage:
+        return Response({'status': 'error', 'message': 'Page not found'}, status=404)
+
+    data = {
+        'status': 'success',
+        'total_pages': paginator.num_pages,
+        'current_page': page_obj.number,
+        'total_items': paginator.count,
+        'data': list(page_obj),
+        'total': convert_size(total_size)
+    }
+
+    return JsonResponse(data)
 
 
 @api_view(['POST'])
@@ -351,3 +467,88 @@ def update_file_access(request):
         file_access.save()
     
     return JsonResponse({'status': 'success', 'message': 'Access updated successfully'})
+
+
+@api_view(['GET'])
+def search_user_files(request):
+    authentication_classes = [JWTAuthentication]
+
+    # Validate the token and get the user
+    token = request.headers.get('Authorization').split()[1]
+    jwt_auth = JWTAuthentication()
+    try:
+        validated_token = jwt_auth.get_validated_token(token)
+        user = jwt_auth.get_user(validated_token)
+    except InvalidToken:
+        return Response({'error': 'Invalid token!'}, status=status.HTTP_401_UNAUTHORIZED)
+
+    user_id = user.id
+    page_number = request.query_params.get('page', 1)
+    search_term = request.query_params.get('search', '')
+
+    if not user_id:
+        return Response({'status': 'error', 'message': 'User ID is required'}, status=400)
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response({'status': 'error', 'message': 'User not found'}, status=404)
+
+    # Search in owned files
+    owned_files = File.objects.filter(user=user).filter(Q(file_name__icontains=search_term)).order_by('file_name')
+    owned_files_list = []
+    total_size = 0
+    for file in owned_files:
+        formatted_time = format_upload_time(file.upload_time)
+        owned_files_list.append({
+            'id': file.id,
+            'name': file.file_name,
+            'space': convert_size(file.file_size),
+            'file_format': file.file_format,
+            'image': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(file.file_format)),
+            'owner_access': True,
+            'time': formatted_time['time'],
+            'day_time': formatted_time['typeee'],
+            'month': formatted_time['month'],
+            'date': formatted_time['date']
+        })
+        total_size += file.file_size
+
+    # Search in accessed files
+    accessed_files_records = FileAccess.objects.filter(shared_with=user).filter(Q(file__file_name__icontains=search_term)).select_related('file')
+    accessed_files_list = []
+    for record in accessed_files_records:
+        formatted_time = format_upload_time(record.file.upload_time)
+        accessed_files_list.append({
+            'id': record.file.id,
+            'name': record.file.file_name,
+            'space': convert_size(record.file.file_size),
+            'file_format': record.file.file_format,
+            'image': request.build_absolute_uri(settings.STATIC_URL + get_icon_for_file(record.file.file_format)),
+            'owner_access': False,
+            'time': formatted_time['time'],
+            'day_time': formatted_time['typeee'],
+            'month': formatted_time['month'],
+            'date': formatted_time['date']
+        })
+        total_size += record.file.file_size
+
+    combined_list = owned_files_list + accessed_files_list
+
+    paginator = Paginator(combined_list, 24)  # Show 24 items per page
+
+    try:
+        page_obj = paginator.page(page_number)
+    except EmptyPage:
+        return Response({'status': 'error', 'message': 'Page not found'}, status=404)
+
+    data = {
+        'status': 'success',
+        'total_pages': paginator.num_pages,
+        'current_page': page_obj.number,
+        'total_items': paginator.count,
+        'data': list(page_obj),
+        'total': convert_size(total_size)
+    }
+
+    return JsonResponse(data)
