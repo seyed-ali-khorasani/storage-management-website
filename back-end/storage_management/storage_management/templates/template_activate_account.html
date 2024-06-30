@@ -1,1 +1,14 @@
-{% autoescape off %} Hi {{ user }}, Please click on the link below to confirm your registration: {{ protocol }}://{{ domain }}/user/activate/{{ uid }}/{{token }} {% endautoescape %}
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+</head>
+
+<body>
+    <a href="localhost:3000/user/activate/{{ uid }}/{{token }}">active your email</a>
+</body>
+
+</html>
